@@ -470,12 +470,55 @@ function confirmAddExercise(){
   exercises.push({name,sets:Array.from({length:sets},()=>({reps,weight}))});
   showingForm=false;renderLog();
 }
+function exVolume(sets){ return sets.reduce((s,r)=>s+r.reps*r.weight,0); }
+
 function saveWorkout(){
-  if(!exercises.length)return;
-  const p=getProgram();
-  ls.set(`lifts_workout_${todayKey()}_d${activeDay}`,{date:todayKey(),dayIdx:activeDay,dayName:p[activeDay].name,exercises:JSON.parse(JSON.stringify(exercises))});
-  exercises=[];showingForm=false;renderLog();
-  showToast(`${p[activeDay].name} saved ✓`);
+  if(!exercises.length) return;
+  const p = getProgram();
+  const snapshot = JSON.parse(JSON.stringify(exercises));
+
+  // Save the workout log entry
+  ls.set(`lifts_workout_${todayKey()}_d${activeDay}`, {
+    date: todayKey(), dayIdx: activeDay,
+    dayName: p[activeDay].name, exercises: snapshot
+  });
+
+  // Update template per-exercise only when today beats the previous best volume
+  const tmpl = p[activeDay].exercises;
+  let updatedCount = 0;
+  snapshot.forEach(todayEx => {
+    const norm = todayEx.name.trim().toLowerCase();
+    const todayVol = exVolume(todayEx.sets);
+
+    // Find best historical volume for this exercise on this day (excluding today)
+    const keys = ls.keys('lifts_workout_').filter(k=>k.includes(`_d${activeDay}`)).sort().reverse();
+    let bestPrev = 0;
+    for(const k of keys){
+      const w = ls.get(k);
+      if(!w || w.date === todayKey()) continue;
+      const match = w.exercises.find(e=>e.name.trim().toLowerCase()===norm);
+      if(match){ bestPrev = Math.max(bestPrev, exVolume(match.sets)); }
+    }
+
+    if(todayVol > bestPrev){
+      // Find or create this exercise in the template
+      const tmplIdx = tmpl.findIndex(e=>e.name.trim().toLowerCase()===norm);
+      if(tmplIdx>=0){
+        tmpl[tmplIdx].sets = todayEx.sets.map(s=>({...s}));
+      } else {
+        tmpl.push({name: todayEx.name, sets: todayEx.sets.map(s=>({...s}))});
+      }
+      updatedCount++;
+    }
+  });
+
+  if(updatedCount > 0) saveProgram(p);
+
+  exercises=[]; showingForm=false; renderLog();
+  const msg = updatedCount > 0
+    ? `${p[activeDay].name} saved · ${updatedCount} PR${updatedCount>1?'s':''} → template updated 🏆`
+    : `${p[activeDay].name} saved ✓`;
+  showToast(msg);
 }
 
 // ── PROGRAM TAB ───────────────────────────────────────────────────────────
